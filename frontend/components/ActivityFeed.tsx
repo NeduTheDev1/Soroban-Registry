@@ -32,10 +32,24 @@ const getEventConfig = (t: any): Record<string, { icon: any, label: string, colo
   publisher_created: { icon: UserPlus, label: t('activityFeed.newPublisher', 'New Publisher'), color: 'text-pink-500 bg-pink-500/10' },
 });
 
+type RealtimeDeploymentEvent = {
+  contractId: string;
+  contractName: string;
+  publisher: string;
+  version: string;
+  timestamp: string;
+};
+
+type RealtimeUpdateEvent = {
+  contractId: string;
+  updateType: string;
+  details: Record<string, unknown>;
+  timestamp: string;
+};
+
 export default function ActivityFeed() {
   const { t } = useTranslation('common');
   const EVENT_CONFIG = getEventConfig(t);
-  const queryClient = useQueryClient();
   const { subscribe, isConnected } = useRealtime();
 
   const [eventType, setEventType] = useState<AnalyticsEventType | 'all'>('all');
@@ -67,10 +81,10 @@ export default function ActivityFeed() {
       const newEvent: AnalyticsEvent = {
         id: Math.random().toString(36).substring(7),
         event_type: 'contract_deployed',
-        contract_id: event.contract_id,
+        contract_id: event.contractId,
         user_address: event.publisher,
         network: null, // We don't have it in the realtime event directly but could infer or leave null
-        metadata: { name: event.contract_name, version: event.version },
+        metadata: { name: event.contractName, version: event.version },
         created_at: event.timestamp || new Date().toISOString(),
       };
 
@@ -83,10 +97,10 @@ export default function ActivityFeed() {
       const newEvent: AnalyticsEvent = {
         id: Math.random().toString(36).substring(7),
         event_type: 'contract_updated',
-        contract_id: event.contract_id,
+        contract_id: event.contractId,
         user_address: null,
         network: null,
-        metadata: { update_type: event.update_type, ...event.details },
+        metadata: { update_type: event.updateType, ...event.details },
         created_at: event.timestamp || new Date().toISOString(),
       };
 
@@ -95,8 +109,8 @@ export default function ActivityFeed() {
       }
     };
 
-    const unsubDeploy = subscribe('contract_deployed', handleDeployment);
-    const unsubUpdate = subscribe('contract_updated', handleUpdate);
+    const unsubDeploy = subscribe('contract_deployed', (data: unknown) => handleDeployment(data as RealtimeDeploymentEvent));
+    const unsubUpdate = subscribe('contract_updated', (data: unknown) => handleUpdate(data as RealtimeUpdateEvent));
 
     return () => {
       unsubDeploy();

@@ -1,6 +1,17 @@
 'use client';
 
-import { useReportWebVitals, type Metric } from 'next/web-vitals';
+import { useReportWebVitals } from 'next/web-vitals';
+
+// Inline type definition for Metric
+type Metric = {
+  id: string;
+  name: string;
+  value: number;
+  rating: 'good' | 'needs-improvement' | 'poor';
+  delta: number;
+  entries: PerformanceEntry[];
+  navigationType: 'navigate' | 'reload' | 'back-forward' | 'prerender';
+};
 
 export function useWebVitals() {
   useReportWebVitals((metric: Metric) => {
