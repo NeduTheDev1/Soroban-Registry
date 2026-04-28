@@ -46,15 +46,17 @@ INTERNAL_ERROR
 
 ```json
 {
+  "code": "VALIDATION_ERROR",
   "error_code": "BAD_REQUEST",
   "message": "Validation failed for 2 fields",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": "2026-04-28T12:34:56Z",
   "details": {
-    "reason": "VALIDATION_ERROR",
     "field_errors": [
       {"field": "contract_id", "message": "Invalid format"},
       {"field": "network", "message": "Unsupported network"}
-    ],
-    "correlation_id": "550e8400-e29b-41d4-a716-446655440000"
+    ]
   }
 }
 ```
