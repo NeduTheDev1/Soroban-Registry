@@ -1,11 +1,42 @@
 "use client";
 
+<<<<<<< taiwo/hardcoed
 import React from 'react';
 import { CheckCircle2, Info, ShieldAlert, ShieldCheck, ShieldX } from 'lucide-react';
 import type { VerificationStatus } from '@/types/verification';
 import { useTranslation } from '@/lib/i18n/client';
 
 function getBadgeConfig(status: VerificationStatus, level?: string): {
+=======
+<<<<<<< HEAD
+import React from 'react';
+import { CheckCircle2, ShieldAlert, ShieldCheck, ShieldX } from 'lucide-react';
+import type { VerificationStatus } from '@/types/verification';
+import { useTranslation } from '@/lib/i18n/client';
+import type { TFunction } from 'i18next';
+
+function getBadgeConfig(status: VerificationStatus, t: TFunction): {
+=======
+import React from "react";
+import {
+  CheckCircle2,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
+  Info,
+} from "lucide-react";
+import type {
+  VerificationStatus,
+  VerificationLevel,
+} from "@/types/verification";
+import { useTranslation } from "@/lib/i18n/client";
+
+function getBadgeConfig(
+  status: VerificationStatus,
+  level?: VerificationLevel,
+): {
+>>>>>>> main
+>>>>>>> main
   label: string;
   className: string;
   Icon: React.ComponentType<{ className?: string }>;
