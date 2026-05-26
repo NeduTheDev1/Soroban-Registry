@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -13,7 +13,8 @@ use crate::{
     auth::AuthenticatedUser,
     error::{ApiError, ApiResult},
     marketplace::{
-        license::{LicenseClaims, LicenseError, LicenseSigner},
+        self, issuance,
+        license::LicenseError,
         models::{
             IssueLicenseRequest, IssuedLicense, LicenseRecord, ValidateLicenseRequest,
             ValidateLicenseResponse,
@@ -29,78 +30,18 @@ pub async fn issue_license(
     Path(contract_id): Path<Uuid>,
     Json(req): Json<IssueLicenseRequest>,
 ) -> ApiResult<(StatusCode, Json<IssuedLicense>)> {
-    let signer = load_signer()?;
-
-    // The plan must exist, be active, and belong to this contract.
-    let plan = sqlx::query_as::<_, PlanForIssue>(
-        r#"
-        SELECT id, name, billing_period, call_quota
-        FROM contract_pricing_plans
-        WHERE id = $1 AND contract_id = $2 AND is_active
-        "#,
+    let signer = marketplace::load_signer()?;
+    let metadata = req.metadata.unwrap_or_else(|| serde_json::json!({"source":"self_serve"}));
+    let issued = issuance::issue_for_owner(
+        &state.db,
+        &signer,
+        contract_id,
+        req.plan_id,
+        user.publisher_id,
+        metadata,
     )
-    .bind(req.plan_id)
-    .bind(contract_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| {
-        ApiError::not_found(
-            "plan_not_found",
-            "pricing plan not found or inactive for this contract",
-        )
-    })?;
-
-    let now = Utc::now();
-    let expires_at = match plan.billing_period.as_str() {
-        "monthly" => Some(now + Duration::days(30)),
-        _ => None, // one_time licenses are non-expiring by default
-    };
-
-    let metadata = req.metadata.unwrap_or_else(|| serde_json::json!({}));
-
-    // Insert first to obtain the row's id and stable `jti`.
-    let jti = Uuid::new_v4();
-    let record = sqlx::query_as::<_, LicenseRecord>(
-        r#"
-        INSERT INTO contract_licenses
-            (jti, contract_id, plan_id, owner_id, issued_at, expires_at, status, metadata)
-        VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
-        RETURNING id, jti, contract_id, plan_id, owner_id, issued_at, expires_at,
-                  revoked_at, status, metadata, created_at
-        "#,
-    )
-    .bind(jti)
-    .bind(contract_id)
-    .bind(plan.id)
-    .bind(user.publisher_id)
-    .bind(now)
-    .bind(expires_at)
-    .bind(&metadata)
-    .fetch_one(&state.db)
     .await?;
-
-    let claims = LicenseClaims {
-        jti: record.jti,
-        sub: record.owner_id,
-        aud: record.contract_id,
-        plan_id: record.plan_id,
-        plan_name: plan.name,
-        iat: now.timestamp(),
-        exp: expires_at.map(|t| t.timestamp()),
-        quota: plan.call_quota,
-    };
-    let token = signer
-        .sign(&claims)
-        .map_err(|e| ApiError::internal_error("license_sign_failed", e.to_string()))?;
-
-    Ok((
-        StatusCode::CREATED,
-        Json(IssuedLicense {
-            license: record,
-            token,
-            public_key_b64: signer.public_key_b64(),
-        }),
-    ))
+    Ok((StatusCode::CREATED, Json(issued)))
 }
 
 /// POST /api/marketplace/licenses/validate
@@ -111,7 +52,7 @@ pub async fn validate_license(
     State(state): State<AppState>,
     Json(req): Json<ValidateLicenseRequest>,
 ) -> ApiResult<Json<ValidateLicenseResponse>> {
-    let signer = load_signer()?;
+    let signer = marketplace::load_signer()?;
 
     let claims = match signer.verify(&req.token) {
         Ok(c) => c,
@@ -251,31 +192,11 @@ pub async fn list_my_licenses(
 /// Returns the Ed25519 verification key so clients can validate JWTs
 /// offline (e.g. a contract's gateway that doesn't want to phone home).
 pub async fn license_pubkey(State(_state): State<AppState>) -> ApiResult<Json<PubKeyResponse>> {
-    let signer = load_signer()?;
+    let signer = marketplace::load_signer()?;
     Ok(Json(PubKeyResponse {
         alg: "EdDSA".into(),
         public_key_b64: signer.public_key_b64(),
     }))
-}
-
-fn load_signer() -> ApiResult<LicenseSigner> {
-    LicenseSigner::from_env().map_err(|e| {
-        ApiError::service_unavailable_with(
-            "license_signing_unavailable",
-            format!(
-                "marketplace license signing key is not configured: {e}. \
-                 Set MARKETPLACE_LICENSE_SIGNING_KEY (base64-encoded 32-byte Ed25519 seed)."
-            ),
-        )
-    })
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct PlanForIssue {
-    id: Uuid,
-    name: String,
-    billing_period: String,
-    call_quota: Option<i64>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

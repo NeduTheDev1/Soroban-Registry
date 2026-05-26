@@ -9,7 +9,7 @@ use crate::{
     deprecation_handlers, error_logging, formal_verification_handlers, gas_estimation_handlers,
     governance_handlers, graph_analysis_handlers, handlers, interoperability_handlers,
     marketplace::{license_handlers as mp_license, metering as mp_metering,
-                  pricing_handlers as mp_pricing},
+                  pricing_handlers as mp_pricing, stripe_handlers as mp_stripe},
     metrics_handler, migration_handlers, mutation_testing_handlers, org_handlers, patch_handlers,
     performance_handlers, plugin_marketplace_handlers, publisher_verification_handlers,
     recommendation_handlers, resource_handlers, search_postgres, security_scan_handlers,
@@ -175,6 +175,15 @@ pub fn marketplace_routes() -> Router<AppState> {
         .route(
             "/api/marketplace/licenses/:jti/usage",
             get(mp_metering::get_usage).post(mp_metering::record_usage),
+        )
+        // Phase 2 — Stripe checkout + webhook (idempotent by event id)
+        .route(
+            "/api/contracts/:contract_id/checkout",
+            post(mp_stripe::create_checkout),
+        )
+        .route(
+            "/api/marketplace/stripe/webhook",
+            post(mp_stripe::webhook),
         )
 }
 
