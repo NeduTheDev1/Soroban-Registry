@@ -6,7 +6,8 @@ use crate::{
     canary_handlers, category_handlers, client_observability_handlers, clone_federation_handlers,
     collaborative_reviews, compatibility_testing_handlers, contract_events,
     contract_stats_handlers, contributor_handlers, custom_metrics_handlers, dependency_handlers,
-    deprecation_handlers, error_logging, formal_verification_handlers, gas_estimation_handlers,
+    deprecated_contracts_handlers, deprecation_handlers, error_logging,
+    formal_verification_handlers, gas_estimation_handlers,
     governance_handlers, graph_analysis_handlers, handlers, interoperability_handlers,
     marketplace::{license_handlers as mp_license, metering as mp_metering,
                   pricing_handlers as mp_pricing, stripe_handlers as mp_stripe,
@@ -14,30 +15,11 @@ use crate::{
     elasticsearch_handlers, integrity, metrics_handler, migration_handlers, mutation_testing_handlers,
     org_handlers, partition_manager, patch_handlers, performance_handlers,
     plugin_marketplace_handlers, publisher_verification_handlers, query_monitor,
-    recommendation_handlers, resource_handlers, search_postgres, security_scan_handlers,
-    similarity_handlers, simulation_handlers, state::AppState,
+    recommendation_handlers, report_handlers, resource_handlers, search_postgres,
+    security_scan_handlers, similarity_handlers, simulation_handlers, state::AppState,
     state_monitor::handlers as state_monitor_handlers, stats, subscription_handlers,
+    v1_similar_handlers, v1_trending_handlers,
     verification_handlers, websocket, zk_proof_handlers,
-    ab_test_handlers, abi_versioning_handlers,
-    ai::handlers as ai_handlers,
-    analytics_handlers, archival, auth, auth_handlers, batch_verify_handlers, breaking_changes,
-    bulk_operations_handlers, canary_handlers, category_handlers, client_observability_handlers,
-    clone_federation_handlers, collaborative_reviews, compatibility_testing_handlers,
-    contract_events, contract_stats_handlers, contributor_handlers, custom_metrics_handlers,
-    dependency_handlers, deprecation_handlers, elasticsearch_handlers, error_logging,
-    formal_verification_handlers, gas_estimation_handlers, governance_handlers,
-    graph_analysis_handlers, handlers, interoperability_handlers,
-    marketplace::{
-        license_handlers as mp_license, metering as mp_metering, pricing_handlers as mp_pricing,
-        stripe_handlers as mp_stripe, usdc_handlers as mp_usdc,
-    },
-    metrics_handler, migration_handlers, mutation_testing_handlers, org_handlers,
-    partition_manager, patch_handlers, performance_handlers, plugin_marketplace_handlers,
-    publisher_verification_handlers, query_monitor, recommendation_handlers, resource_handlers,
-    search_postgres, security_scan_handlers, similarity_handlers, simulation_handlers,
-    state::AppState,
-    state_monitor::handlers as state_monitor_handlers,
-    stats, subscription_handlers, verification_handlers, websocket, zk_proof_handlers,
 };
 
 use axum::{
@@ -104,6 +86,8 @@ pub fn application_routes(_schema: crate::graphql::schema::RegistrySchema) -> Ro
         .merge(archival_routes())
         .merge(elasticsearch_search_routes())
         .merge(integrity_routes())
+        // Discovery & reporting endpoints (issues #870–#873)
+        .merge(discovery_reporting_routes())
 }
 
 fn multisig_routes_group() -> Router<AppState> {
@@ -1404,5 +1388,36 @@ pub fn elasticsearch_search_routes() -> Router<AppState> {
         .route(
             "/api/admin/search/synonyms",
             get(elasticsearch_handlers::get_synonyms).put(elasticsearch_handlers::upsert_synonym),
+        )
+}
+
+// ── Discovery & Reporting routes (issues #870–#873) ───────────────────────────
+
+/// Routes for the v1 discovery and reporting endpoints.
+pub fn discovery_reporting_routes() -> Router<AppState> {
+    Router::new()
+        // Issue #873: Contract issue reporting
+        .route(
+            "/api/v1/contracts/:id/report",
+            post(report_handlers::report_contract),
+        )
+        .route(
+            "/api/v1/contracts/:id/report/:report_id/status",
+            get(report_handlers::get_report_status),
+        )
+        // Issue #872: List deprecated contracts
+        .route(
+            "/api/v1/contracts/deprecated",
+            get(deprecated_contracts_handlers::list_deprecated_contracts),
+        )
+        // Issue #871: Similar contracts (v1, with type param + 6h cache)
+        .route(
+            "/api/v1/contracts/:id/similar",
+            get(v1_similar_handlers::get_similar_contracts_v1),
+        )
+        // Issue #870: Trending endpoint (v1, with window param)
+        .route(
+            "/api/v1/trending",
+            get(v1_trending_handlers::get_trending_v1),
         )
 }
