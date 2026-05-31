@@ -31,6 +31,7 @@ mod migration;
 mod multisig;
 mod net;
 mod network;
+mod output_format;
 mod package_signing;
 mod patch;
 mod plugins;
@@ -108,7 +109,7 @@ pub enum Commands {
         /// Time period: 7d, 30d, 90d, or RFC3339 range start..end
         #[arg(long, default_value = "30d")]
         period: String,
-        /// Output format: table, json, csv
+        /// Output format: table, json, csv, yaml
         #[arg(long, default_value = "table")]
         format: String,
         /// Sort mode: value_desc, value_asc, key_asc, key_desc
@@ -201,7 +202,7 @@ pub enum Commands {
         #[arg(long, short)]
         category: Option<String>,
 
-        /// Output format (table, json, csv)
+        /// Output format (table, json, csv, yaml)
         #[arg(long, short, default_value = "table")]
         format: String,
     },
@@ -3387,7 +3388,7 @@ pub enum Commands {
         /// Time period: 7d, 30d, 90d, or RFC3339 range start..end
         #[arg(long, default_value = "30d")]
         period: String,
-        /// Output format: table, json, csv
+        /// Output format: table, json, csv, yaml
         #[arg(long, default_value = "table")]
         format: String,
         /// Sort mode: value_desc, value_asc, key_asc, key_desc
@@ -3480,7 +3481,7 @@ pub enum Commands {
         #[arg(long, short)]
         category: Option<String>,
 
-        /// Output format (table, json, csv)
+        /// Output format (table, json, csv, yaml)
         #[arg(long, short, default_value = "table")]
         format: String,
     },
@@ -5007,7 +5008,7 @@ pub enum ContractCommands {
         #[arg(long, default_value_t = 10)]
         top_n: usize,
 
-        /// Output format: table, json, csv
+        /// Output format: table, json, csv, yaml
         #[arg(long, default_value = "table")]
         format: String,
 
@@ -7739,7 +7740,7 @@ pub enum Commands {
         /// Time period: 7d, 30d, 90d, or RFC3339 range start..end
         #[arg(long, default_value = "30d")]
         period: String,
-        /// Output format: table, json, csv
+        /// Output format: table, json, csv, yaml
         #[arg(long, default_value = "table")]
         format: String,
         /// Sort mode: value_desc, value_asc, key_asc, key_desc
@@ -7832,7 +7833,7 @@ pub enum Commands {
         #[arg(long, short)]
         category: Option<String>,
 
-        /// Output format (table, json, csv)
+        /// Output format (table, json, csv, yaml)
         #[arg(long, short, default_value = "table")]
         format: String,
     },
@@ -9359,7 +9360,7 @@ pub enum ContractCommands {
         #[arg(long, default_value_t = 10)]
         top_n: usize,
 
-        /// Output format: table, json, csv
+        /// Output format: table, json, csv, yaml
         #[arg(long, default_value = "table")]
         format: String,
 
