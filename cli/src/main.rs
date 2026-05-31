@@ -2,7 +2,9 @@
 
 mod analytics;
 mod analyze;
+mod api_key;
 mod audit_command;
+mod auth;
 mod backup;
 mod batch_ops;
 mod batch_register;
@@ -7657,9 +7659,11 @@ mod batch_export;
 mod batch_import;
 mod batch_migrate;
 mod batch_notify;
+mod batch_ops;
 mod batch_register;
 mod batch_update;
 mod batch_verify;
+mod cache;
 mod cached_http;
 mod cicd;
 mod codegen;
@@ -7667,18 +7671,16 @@ mod commands;
 mod compare;
 mod completion;
 mod config;
-mod contract_deploy;
-mod contract_risk;
-mod contract_register;
-mod contract_update;
-mod api_key;
 mod contract_dependency;
+mod contract_deploy;
 mod contract_highlight;
 mod contract_interaction;
+mod contract_register;
+mod contract_risk;
+mod contract_update;
 mod contract_verify;
 mod contracts;
 mod conversions;
-mod cache;
 mod coverage;
 mod dashboard;
 mod deploy;
@@ -7713,6 +7715,10 @@ mod verification;
 mod version;
 mod webhook;
 mod wizard;
+
+mod diagnostic;
+mod output_format;
+mod search;
 
 use anyhow::Result;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
@@ -8332,6 +8338,12 @@ pub enum Commands {
     Auth {
         #[command(subcommand)]
         action: AuthCommands,
+    },
+
+    /// Manage contract backups and disaster recovery
+    Backup {
+        #[command(subcommand)]
+        action: BackupCommands,
     },
 
     /// Inspect and modify contract state (dev/test mutation only)
@@ -9018,6 +9030,43 @@ pub enum AuthCommands {
         /// Token lifetime, e.g. 1h, 30m, 7d, or seconds
         #[arg(long)]
         expires: Option<String>,
+    },
+}
+
+/// Sub-commands for the `backup` group
+#[derive(Debug, Subcommand)]
+pub enum BackupCommands {
+    /// Create a new contract backup
+    Create {
+        /// Contract ID to back up
+        contract_id: String,
+        /// Include full contract state in backup
+        #[arg(long)]
+        include_state: bool,
+    },
+    /// List recent backups for a contract
+    List {
+        /// Contract ID
+        contract_id: String,
+    },
+    /// Restore a contract from a specific backup date
+    Restore {
+        /// Contract ID to restore
+        contract_id: String,
+        /// Backup date to restore from (YYYY-MM-DD)
+        backup_date: String,
+    },
+    /// Verify integrity of a specific backup
+    Verify {
+        /// Contract ID
+        contract_id: String,
+        /// Backup date to verify (YYYY-MM-DD)
+        backup_date: String,
+    },
+    /// Show backup statistics for a contract
+    Stats {
+        /// Contract ID
+        contract_id: String,
     },
 }
 
@@ -11020,7 +11069,11 @@ pub async fn dispatch_command(
         // ── User profile management (#841) ───────────────────────────────────
         Commands::Profile { action } => match action {
             ProfileCommands::View { address, json } => {
-                log::debug!("Command: profile view | address={:?} json={}", address, json);
+                log::debug!(
+                    "Command: profile view | address={:?} json={}",
+                    address,
+                    json
+                );
                 user_profile::view(&cli.api_url, address.as_deref(), json).await?;
             }
             ProfileCommands::Edit {
@@ -11044,11 +11097,7 @@ pub async fn dispatch_command(
                 .await?;
             }
             ProfileCommands::Update { field, value } => {
-                log::debug!(
-                    "Command: profile update | field={} value={}",
-                    field,
-                    value
-                );
+                log::debug!("Command: profile update | field={} value={}", field, value);
                 user_profile::update_field(&cli.api_url, &field, &value).await?;
             }
             ProfileCommands::ListContracts {
@@ -11063,8 +11112,14 @@ pub async fn dispatch_command(
                     limit,
                     format
                 );
-                user_profile::list_contracts(&cli.api_url, address.as_deref(), limit, &format, json)
-                    .await?;
+                user_profile::list_contracts(
+                    &cli.api_url,
+                    address.as_deref(),
+                    limit,
+                    &format,
+                    json,
+                )
+                .await?;
             }
             ProfileCommands::Export { address, format } => {
                 log::debug!(
@@ -11273,8 +11328,38 @@ pub async fn dispatch_command(
                 auth::status(&cli.api_url).await?;
             }
             AuthCommands::Token { scopes, expires } => {
-                log::debug!("Command: auth token | scopes={:?} expires={:?}", scopes, expires);
+                log::debug!(
+                    "Command: auth token | scopes={:?} expires={:?}",
+                    scopes,
+                    expires
+                );
                 auth::token(&cli.api_url, scopes, expires.as_deref()).await?;
+            }
+        },
+        Commands::Backup { action } => match action {
+            BackupCommands::Create {
+                contract_id,
+                include_state,
+            } => {
+                backup::create_backup(&cli.api_url, &contract_id, include_state).await?;
+            }
+            BackupCommands::List { contract_id } => {
+                backup::list_backups(&cli.api_url, &contract_id).await?;
+            }
+            BackupCommands::Restore {
+                contract_id,
+                backup_date,
+            } => {
+                backup::restore_backup(&cli.api_url, &contract_id, &backup_date).await?;
+            }
+            BackupCommands::Verify {
+                contract_id,
+                backup_date,
+            } => {
+                backup::verify_backup(&cli.api_url, &contract_id, &backup_date).await?;
+            }
+            BackupCommands::Stats { contract_id } => {
+                backup::backup_stats(&cli.api_url, &contract_id).await?;
             }
         },
         Commands::State { action } => match action {
@@ -11582,7 +11667,16 @@ pub async fn dispatch_command(
                     batch,
                     no_cache
                 );
-                contract_verify::run(&cli.api_url, &address, &network, json, strict, batch, no_cache).await?;
+                contract_verify::run(
+                    &cli.api_url,
+                    &address,
+                    &network,
+                    json,
+                    strict,
+                    batch,
+                    no_cache,
+                )
+                .await?;
             }
             ContractCommands::Details {
                 address,
@@ -11645,14 +11739,8 @@ pub async fn dispatch_command(
                     threshold,
                     json
                 );
-                contract_risk::run(
-                    &cli.api_url,
-                    &address,
-                    &network,
-                    threshold.as_deref(),
-                    json,
-                )
-                .await?;
+                contract_risk::run(&cli.api_url, &address, &network, threshold.as_deref(), json)
+                    .await?;
             }
             ContractCommands::Stats {
                 network,
@@ -12197,7 +12285,10 @@ pub async fn dispatch_command(
                 log::debug!("Command: cache optimize | json={}", json);
                 cache::optimize(json)?;
             }
-            CacheCommands::Export { format, include_stale } => {
+            CacheCommands::Export {
+                format,
+                include_stale,
+            } => {
                 log::debug!(
                     "Command: cache export | format={} include_stale={}",
                     format,
