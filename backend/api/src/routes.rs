@@ -920,6 +920,14 @@ pub fn migration_routes() -> Router<AppState> {
             "/api/admin/migrations/:version/rollback",
             post(migration_handlers::rollback_migration),
         )
+        .route(
+            "/api/admin/migrations/apply",
+            post(migration_handlers::apply_migration),
+        )
+        .route(
+            "/api/admin/migrations/audit",
+            get(migration_handlers::get_migration_audit),
+        )
 }
 
 pub fn compatibility_dashboard_routes() -> Router<AppState> {
