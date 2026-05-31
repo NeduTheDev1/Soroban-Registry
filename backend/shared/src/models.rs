@@ -1028,6 +1028,9 @@ pub struct ContractSearchParams {
 #[serde(rename_all = "lowercase")]
 pub enum ContractExportFormat {
     Json,
+    /// Newline-delimited JSON (one object per line). Suitable for streaming
+    /// and processing with tools such as `jq` and `dbt`.
+    Jsonl,
     Csv,
     Yaml,
 }
@@ -1036,8 +1039,28 @@ impl std::fmt::Display for ContractExportFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Json => write!(f, "json"),
+            Self::Jsonl => write!(f, "jsonl"),
             Self::Csv => write!(f, "csv"),
             Self::Yaml => write!(f, "yaml"),
+        }
+    }
+}
+
+impl ContractExportFormat {
+    pub fn content_type(&self) -> &'static str {
+        match self {
+            Self::Json | Self::Jsonl => "application/json",
+            Self::Csv => "text/csv; charset=utf-8",
+            Self::Yaml => "application/yaml",
+        }
+    }
+
+    pub fn file_extension(&self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Jsonl => "jsonl",
+            Self::Csv => "csv",
+            Self::Yaml => "yaml",
         }
     }
 }
