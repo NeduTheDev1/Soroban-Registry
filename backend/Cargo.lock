@@ -166,6 +166,7 @@ dependencies = [
  "jsonwebtoken",
  "k256",
  "lazy_static",
+ "log",
  "lru",
  "moka",
  "once_cell",
