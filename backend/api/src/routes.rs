@@ -384,6 +384,10 @@ pub fn contract_routes() -> Router<AppState> {
             get(handlers::get_contract_audit_log),
         )
         .route(
+            "/api/v1/contracts/:id/audits",
+            get(handlers::get_contract_audits),
+        )
+        .route(
             "/api/contracts/:id/abi",
             get(handlers::get_contract_abi).post(abi_versioning_handlers::publish_abi),
         )
