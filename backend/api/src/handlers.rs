@@ -6756,228 +6756,6 @@ pub async fn get_contract_deployments(
     Ok(Json(response))
 }
 
-#[utoipa::path(
-    get,
-    path = "/api/v1/contracts/{id}/deployments",
-    params(
-        ("id" = String, Path, description = "Contract UUID or Stellar Address"),
-        shared::V1DeploymentHistoryQueryParams
-    ),
-    responses(
-        (status = 200, description = "List of contract on-chain deployments in V1 format", body = shared::V1PaginatedDeploymentsResponse),
-        (status = 404, description = "Contract not found")
-    ),
-    tag = "Deployments"
-)]
-pub async fn get_contract_deployments_v1(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(params): Query<shared::V1DeploymentHistoryQueryParams>,
-) -> ApiResult<Json<shared::V1PaginatedDeploymentsResponse>> {
-    let contract_uuid = Uuid::parse_str(&id).ok();
-
-    let target_uuids = if let Some(uuid) = contract_uuid {
-        let logical_id: Option<Uuid> =
-            sqlx::query_scalar("SELECT logical_id FROM contracts WHERE id = $1")
-                .bind(uuid)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(|err| db_internal_error("get logical_id", err))?;
-
-        ensure_contract_exists(&state, uuid, &id, "get contract for list deployments").await?;
-        if let Some(lid) = logical_id {
-            sqlx::query_scalar("SELECT id FROM contracts WHERE logical_id = $1")
-                .bind(lid)
-                .fetch_all(&state.db)
-                .await
-                .map_err(|err| db_internal_error("get contracts by logical_id", err))?
-        } else {
-            vec![uuid]
-        }
-    } else {
-        let uuid = dependency::resolve_contract_id(&state.db, &id)
-            .await
-            .map_err(|err| {
-                ApiError::not_found(
-                    "CONTRACT_NOT_FOUND",
-                    format!("Contract {} not found: {}", id, err),
-                )
-            })?
-            .ok_or_else(|| {
-                ApiError::not_found("CONTRACT_NOT_FOUND", format!("Contract {} not found", id))
-            })?;
-
-        let logical_id: Option<Uuid> =
-            sqlx::query_scalar("SELECT logical_id FROM contracts WHERE id = $1")
-                .bind(uuid)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(|err| db_internal_error("get logical_id", err))?;
-
-        if let Some(lid) = logical_id {
-            sqlx::query_scalar("SELECT id FROM contracts WHERE logical_id = $1")
-                .bind(lid)
-                .fetch_all(&state.db)
-                .await
-                .map_err(|err| db_internal_error("get contracts by logical_id", err))?
-        } else {
-            vec![uuid]
-        }
-    };
-
-    if target_uuids.is_empty() {
-        return Err(ApiError::not_found(
-            "CONTRACT_NOT_FOUND",
-            format!("Contract {} not found", id),
-        ));
-    }
-
-    let limit = params.limit.unwrap_or(20).clamp(1, 100);
-    let offset = params.offset.unwrap_or(0).max(0);
-
-    let cache_key = format!(
-        "v1:deployments:{}:{}:{}:{:?}",
-        id, limit, offset, params.network
-    );
-
-    if let (Some(cached), true) = state.cache.get("contract", &cache_key).await {
-        if let Ok(response) =
-            serde_json::from_str::<shared::V1PaginatedDeploymentsResponse>(&cached)
-        {
-            return Ok(Json(response));
-        }
-    }
-
-    let active_interaction_rows: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT ON (ci.network) ci.id \
-         FROM contract_interactions ci \
-         WHERE ci.contract_id = ANY($1) AND ci.interaction_type = 'deploy' \
-         ORDER BY ci.network, ci.created_at DESC"
-    )
-    .bind(&target_uuids)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|err| db_internal_error("fetch active deployments per network", err))?;
-    let active_ids: HashSet<Uuid> = active_interaction_rows.into_iter().collect();
-
-    let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
-        "SELECT ci.id as interaction_id, c.contract_id as address, ci.network::text as network, \
-                ci.created_at as timestamp, ci.user_address as deployer, ci.transaction_hash \
-         FROM contract_interactions ci \
-         JOIN contracts c ON ci.contract_id = c.id \
-         WHERE ci.contract_id = ANY("
-    );
-    query_builder.push_bind(&target_uuids);
-    query_builder.push(") AND ci.interaction_type = 'deploy'");
-
-    if let Some(ref net) = params.network {
-        query_builder.push(" AND ci.network = cast(");
-        query_builder.push_bind(net);
-        query_builder.push(" as network_type)");
-    }
-
-    query_builder.push(" ORDER BY ci.created_at ASC");
-    query_builder.push(" LIMIT ");
-    query_builder.push_bind(limit);
-    query_builder.push(" OFFSET ");
-    query_builder.push_bind(offset);
-
-    struct RowResult {
-        interaction_id: Uuid,
-        address: String,
-        network: String,
-        timestamp: chrono::DateTime<chrono::Utc>,
-        deployer: Option<String>,
-        transaction_hash: Option<String>,
-    }
-
-    let rows = query_builder
-        .build()
-        .map(|r: sqlx::postgres::PgRow| {
-            use sqlx::Row;
-            RowResult {
-                interaction_id: r.get("interaction_id"),
-                address: r.get("address"),
-                network: r.get("network"),
-                timestamp: r.get("timestamp"),
-                deployer: r.get("deployer"),
-                transaction_hash: r.get("transaction_hash"),
-            }
-        })
-        .fetch_all(&state.db)
-        .await
-        .map_err(|err| db_internal_error("fetch deployment history v1", err))?;
-
-    let items: Vec<shared::V1ContractDeploymentHistory> = rows
-        .into_iter()
-        .map(|row| {
-            let network_enum = match row.network.as_str() {
-                "mainnet" => Network::Mainnet,
-                "testnet" => Network::Testnet,
-                _ => Network::Futurenet,
-            };
-            let transaction_link = row.transaction_hash.as_ref().map(|tx_hash| {
-                format!("{}/tx/{}", default_explorer_url(&network_enum), tx_hash)
-            });
-            let status = if active_ids.contains(&row.interaction_id) {
-                "active".to_string()
-            } else {
-                "inactive".to_string()
-            };
-
-            shared::V1ContractDeploymentHistory {
-                address: row.address,
-                network: row.network,
-                timestamp: row.timestamp,
-                status,
-                deployer: row.deployer,
-                transaction_hash: row.transaction_hash,
-                transaction_link,
-            }
-        })
-        .collect();
-
-    let mut count_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
-        "SELECT COUNT(*) FROM contract_interactions WHERE contract_id = ANY("
-    );
-    count_builder.push_bind(&target_uuids);
-    count_builder.push(") AND interaction_type = 'deploy'");
-
-    if let Some(ref net) = params.network {
-        count_builder.push(" AND network = cast(");
-        count_builder.push_bind(net);
-        count_builder.push(" as network_type)");
-    }
-
-    let total: i64 = count_builder
-        .build_query_scalar()
-        .fetch_one(&state.db)
-        .await
-        .map_err(|err| db_internal_error("fetch deployment count v1", err))?;
-
-    let response = shared::V1PaginatedDeploymentsResponse {
-        items,
-        total,
-        limit,
-        offset,
-    };
-
-    if let Ok(serialized) = serde_json::to_string(&response) {
-        state
-            .cache
-            .put(
-                "contract",
-                &cache_key,
-                serialized,
-                Some(std::time::Duration::from_secs(3600)),
-            )
-            .await;
-    }
-
-    Ok(Json(response))
-}
-
-
 /// Stub for dashboard analytics (Issue #415)
 pub async fn get_dashboard_analytics(
     State(_state): State<AppState>,
@@ -8304,4 +8082,144 @@ pub async fn handle_retention_cleanup(State(state): State<AppState>) -> ApiResul
         })?;
 
     Ok(format!("Pruned rows: {}", result.rows_affected()))
+}
+
+static BATCH_INFO_LIMITER: once_cell::sync::Lazy<std::sync::Mutex<std::collections::HashMap<std::net::IpAddr, std::collections::VecDeque<std::time::Instant>>>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Retrieve information for multiple contracts in a single request.
+#[utoipa::path(
+    post,
+    path = "/api/v1/contracts/batch-info",
+    params(shared::V1BatchInfoQueryParams),
+    request_body = Vec<String>,
+    responses(
+        (status = 200, description = "Batch contract information retrieved successfully", body = V1BatchInfoResponse),
+        (status = 429, description = "Too many requests"),
+        (status = 400, description = "Invalid request")
+    ),
+    tag = "Contracts"
+)]
+pub async fn get_contracts_batch_info_v1(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    Query(query): Query<shared::V1BatchInfoQueryParams>,
+    ValidatedJson(contract_ids): ValidatedJson<BatchContractIdsRequest>,
+) -> ApiResult<Json<shared::V1BatchInfoResponse>> {
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .and_then(|v| v.trim().parse::<std::net::IpAddr>().ok())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<std::net::IpAddr>().ok())
+        })
+        .or_else(|| connect_info.map(|c| c.0.ip()))
+        .unwrap_or_else(|| std::net::IpAddr::from([127, 0, 0, 1]));
+
+    let now = std::time::Instant::now();
+    let limit_window = std::time::Duration::from_secs(60);
+    let max_requests = 500;
+
+    {
+        let mut buckets = BATCH_INFO_LIMITER.lock().map_err(|_| {
+            ApiError::internal("Mutex poisoned")
+        })?;
+        let bucket = buckets.entry(ip).or_insert_with(std::collections::VecDeque::new);
+
+        while bucket.front().map(|&ts| now.duration_since(ts) > limit_window).unwrap_or(false) {
+            bucket.pop_front();
+        }
+
+        if bucket.len() >= max_requests {
+            return Err(ApiError::rate_limited(
+                "Too many requests for batch-info. Limit is 500 requests per minute."
+            ));
+        }
+
+        bucket.push_back(now);
+    }
+
+    let mut sorted_ids = contract_ids.0.clone();
+    sorted_ids.sort();
+    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+    sha2::Digest::update(&mut hasher, sorted_ids.join(",").as_bytes());
+    let hash_result = sha2::Digest::finalize(hasher);
+    let cache_key = format!("v1_batch_info:{}:{:?}", hex::encode(hash_result), query.fields);
+
+    if let Some(cached) = state
+        .cache
+        .get::<shared::V1BatchInfoResponse>("contract", &cache_key)
+        .await
+    {
+        return Ok(Json(cached));
+    }
+
+    let mut parsed_uuids: Vec<Uuid> = Vec::new();
+    let mut normalized_ids: Vec<String> = Vec::new();
+    for id in &contract_ids.0 {
+        let trimmed = id.trim();
+        if let Ok(uid) = Uuid::parse_str(trimmed) {
+            parsed_uuids.push(uid);
+        } else {
+            normalized_ids.push(trimmed.to_string());
+        }
+    }
+
+    let contracts: Vec<Contract> = sqlx::query_as(
+        "SELECT * FROM contracts
+         WHERE id = ANY($1)
+            OR contract_id = ANY($2)",
+    )
+    .bind(&parsed_uuids)
+    .bind(&normalized_ids)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get batch contracts info", err))?;
+
+    let mut found_uuids: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+    let mut found_addresses: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for contract in &contracts {
+        found_uuids.insert(contract.id);
+        found_addresses.insert(contract.contract_id.clone());
+    }
+
+    let mut missing: Vec<String> = Vec::new();
+    let mut seen_missing = std::collections::HashSet::new();
+    for requested in &contract_ids.0 {
+        let trimmed = requested.trim();
+        let is_found = if let Ok(uid) = Uuid::parse_str(trimmed) {
+            found_uuids.contains(&uid)
+        } else {
+            found_addresses.contains(trimmed)
+        };
+
+        if !is_found && seen_missing.insert(trimmed.to_string()) {
+            missing.push(requested.clone());
+        }
+    }
+
+    let fields_set = parse_batch_fields(query.fields.as_deref());
+    let mut matched_contracts: Vec<serde_json::Value> = Vec::new();
+    for contract in &contracts {
+        matched_contracts.push(contract_to_filtered_value(contract, fields_set.as_ref()));
+    }
+
+    let response = shared::V1BatchInfoResponse {
+        contracts: matched_contracts,
+        missing,
+    };
+
+    let cache_ttl = std::time::Duration::from_secs(3600);
+    state
+        .cache
+        .set("contract", &cache_key, &response, Some(cache_ttl))
+        .await;
+
+    Ok(Json(response))
 }

@@ -1821,29 +1821,14 @@ pub struct DeploymentHistoryQueryParams {
 }
 
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
-pub struct V1DeploymentHistoryQueryParams {
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
-    pub network: Option<String>,
+pub struct V1BatchInfoQueryParams {
+    pub fields: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct V1ContractDeploymentHistory {
-    pub address: String,
-    pub network: String,
-    pub timestamp: DateTime<Utc>,
-    pub status: String,
-    pub deployer: Option<String>,
-    pub transaction_hash: Option<String>,
-    pub transaction_link: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct V1PaginatedDeploymentsResponse {
-    pub items: Vec<V1ContractDeploymentHistory>,
-    pub total: i64,
-    pub limit: i64,
-    pub offset: i64,
+pub struct V1BatchInfoResponse {
+    pub contracts: Vec<serde_json::Value>,
+    pub missing: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow, utoipa::ToSchema)]

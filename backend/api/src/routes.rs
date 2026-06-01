@@ -392,8 +392,8 @@ pub fn contract_routes() -> Router<AppState> {
             get(handlers::get_contract_abi_v1),
         )
         .route(
-            "/api/v1/contracts/:id/deployments",
-            get(handlers::get_contract_deployments_v1),
+            "/api/v1/contracts/batch-info",
+            post(handlers::get_contracts_batch_info_v1),
         )
         .route(
             "/api/contracts/:id/abi/:version",
